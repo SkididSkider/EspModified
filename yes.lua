@@ -18,7 +18,7 @@ local ESP = {
 
 --Declarations--
 local cam = workspace.CurrentCamera
-local plrs = game:GetService("Players")
+local plrs =  game.Workspace["Game Systems"].Warehouses["Oil Rig1"]["Oil Capture"]["Barrel Template"].MainPart
 local plr = plrs.LocalPlayer
 local mouse = plr:GetMouse()
 
