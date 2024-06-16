@@ -3,12 +3,12 @@ local ESP = {
     Boxes = true,
     BoxShift = CFrame.new(0,-1.5,0),
     BoxSize = Vector3.new(4,6,0),
-    Color = Color3.fromRGB(0, 255, 242),
+    Color = _G.Color3,
     FaceCamera = false,
     Names = true,
-    TeamColor = false,
+    TeamColor = true,
     Thickness = 2,
-    AttachShift = 1,
+    AttachShift = 1.5,
     TeamMates = true,
     Players = true,
     
@@ -18,7 +18,10 @@ local ESP = {
 
 --Declarations--
 local cam = workspace.CurrentCamera
-local oilBarrels = game.Workspace["Game Systems"].Warehouses["Oil Rig1"]["Oil Capture"]
+local plrs = game:GetService("Players")
+local plr = plrs.LocalPlayer
+local mouse = plr:GetMouse()
+
 local V3new = Vector3.new
 local WorldToViewportPoint = cam.WorldToViewportPoint
 
@@ -31,6 +34,42 @@ local function Draw(obj, props)
         new[i] = v
     end
     return new
+end
+
+function ESP:GetTeam(p)
+    local ov = self.Overrides.GetTeam
+    if ov then
+        return ov(p)
+    end
+    
+    return p and p.Team
+end
+
+function ESP:IsTeamMate(p)
+    local ov = self.Overrides.IsTeamMate
+    if ov then
+        return ov(p)
+    end
+    
+    return self:GetTeam(p) == self:GetTeam(plr)
+end
+
+function ESP:GetColor(obj)
+    local ov = self.Overrides.GetColor
+    if ov then
+        return ov(obj)
+    end
+    local p = self:GetPlrFromChar(obj)
+    return p and self.TeamColor and p.Team and p.Team.TeamColor.Color or self.Color
+end
+
+function ESP:GetPlrFromChar(char)
+    local ov = self.Overrides.GetPlrFromChar
+    if ov then
+        return ov(char)
+    end
+    
+    return plrs:GetPlayerFromCharacter(char)
 end
 
 function ESP:Toggle(bool)
@@ -103,13 +142,28 @@ end
 
 function boxBase:Update()
     if not self.PrimaryPart then
+        --warn("not supposed to print", self.Object)
         return self:Remove()
     end
 
-    local color = self.Color or self.ColorDynamic and self:ColorDynamic() or ESP.Color
+    local color
+    if ESP.Highlighted == self.Object then
+       color = ESP.HighlightColor
+    else
+        color = self.Color or self.ColorDynamic and self:ColorDynamic() or ESP:GetColor(self.Object) or ESP.Color
+    end
 
     local allow = true
     if ESP.Overrides.UpdateAllow and not ESP.Overrides.UpdateAllow(self) then
+        allow = false
+    end
+    if self.Player and not ESP.TeamMates and ESP:IsTeamMate(self.Player) then
+        allow = false
+    end
+    if self.Player and not ESP.Players then
+        allow = false
+    end
+    if self.IsEnabled and (type(self.IsEnabled) == "string" and not ESP[self.IsEnabled] or type(self.IsEnabled) == "function" and not self:IsEnabled()) then
         allow = false
     end
     if not workspace:IsAncestorOf(self.PrimaryPart) and not self.RenderInNil then
@@ -121,6 +175,10 @@ function boxBase:Update()
             v.Visible = false
         end
         return
+    end
+
+    if ESP.Highlighted == self.Object then
+        color = ESP.HighlightColor
     end
 
     --calculations--
@@ -206,10 +264,11 @@ function ESP:Add(obj, options)
     local box = setmetatable({
         Name = options.Name or obj.Name,
         Type = "Box",
-        Color = options.Color,
+        Color = options.Color --[[or self:GetColor(obj)]],
         Size = options.Size or self.BoxSize,
         Object = obj,
-        PrimaryPart = options.PrimaryPart or obj.ClassName == "Model" and (obj.PrimaryPart or obj:FindFirstChild("MainPart") or obj:FindFirstChildWhichIsA("BasePart")) or obj:IsA("BasePart") and obj,
+        Player = options.Player or plrs:GetPlayerFromCharacter(obj),
+        PrimaryPart = options.PrimaryPart or obj.ClassName == "Model" and (obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart")) or obj:IsA("BasePart") and obj,
         Components = {},
         IsEnabled = options.IsEnabled,
         Temporary = options.Temporary,
@@ -223,21 +282,21 @@ function ESP:Add(obj, options)
 
     box.Components["Quad"] = Draw("Quad", {
         Thickness = self.Thickness,
-        Color = self.Color,
+        Color = Color,
         Transparency = 1,
         Filled = false,
         Visible = self.Enabled and self.Boxes
     })
     box.Components["Name"] = Draw("Text", {
         Text = box.Name,
-        Color = self.Color,
+        Color = box.Color,
         Center = true,
         Outline = true,
         Size = 19,
         Visible = self.Enabled and self.Names
     })
     box.Components["Distance"] = Draw("Text", {
-        Color = self.Color,
+        Color = box.Color,
         Center = true,
         Outline = true,
         Size = 19,
@@ -246,7 +305,7 @@ function ESP:Add(obj, options)
     
     box.Components["Tracer"] = Draw("Line", {
         Thickness = ESP.Thickness,
-        Color = self.Color,
+        Color = box.Color,
         Transparency = 1,
         Visible = self.Enabled and self.Tracers
     })
@@ -263,18 +322,52 @@ function ESP:Add(obj, options)
         end
     end)
 
+    local hum = obj:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Died:Connect(function()
+            if ESP.AutoRemove ~= false then
+                box:Remove()
+            end
+        end)
+    end
+
     return box
 end
 
--- Add ESP to oil barrels
-ESP:AddObjectListener(oilBarrels, {
-    Type = "Model",
-    Name = "Barrel Template",
-    PrimaryPart = "MainPart",
-    CustomName = "Oil Barrel",
-    Color = Color3.fromRGB(0, 255, 242),
-    IsEnabled = true
-})
+local function CharAdded(char)
+    local p = plrs:GetPlayerFromCharacter(char)
+    if not char:FindFirstChild("HumanoidRootPart") then
+        local ev
+        ev = char.ChildAdded:Connect(function(c)
+            if c.Name == "HumanoidRootPart" then
+                ev:Disconnect()
+                ESP:Add(char, {
+                    Name = p.Name,
+                    Player = p,
+                    PrimaryPart = c
+                })
+            end
+        end)
+    else
+        ESP:Add(char, {
+            Name = p.Name,
+            Player = p,
+            PrimaryPart = char.HumanoidRootPart
+        })
+    end
+end
+local function PlayerAdded(p)
+    p.CharacterAdded:Connect(CharAdded)
+    if p.Character then
+        coroutine.wrap(CharAdded)(p.Character)
+    end
+end
+plrs.PlayerAdded:Connect(PlayerAdded)
+for i,v in pairs(plrs:GetPlayers()) do
+    if v ~= plr then
+        PlayerAdded(v)
+    end
+end
 
 game:GetService("RunService").RenderStepped:Connect(function()
     cam = workspace.CurrentCamera
