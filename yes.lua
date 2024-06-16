@@ -364,7 +364,6 @@ local function PlayerAdded(p)
 end
 plrs.PlayerAdded:Connect(PlayerAdded)
 for i,v in pairs(plrs:GetPlayers()) do
-    if v ~= plr then
         PlayerAdded(v)
     end
 end
